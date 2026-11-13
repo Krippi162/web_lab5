@@ -32,3 +32,60 @@ const cacheDir = path.resolve(options.cache);
 // Тека кешу створюється ДО початку приймання запитів.
 // recursive: true — не кидає помилку, якщо тека вже існує.
 await mkdir(cacheDir, { recursive: true });
+
+
+// Допоміжні функції
+ 
+const ALLOWED_METHODS = ['GET', 'PUT', 'DELETE'];
+const SOURCE_HEADER = 'X-Image-Source'; // звідки взято картинку: cache або http.cat
+ 
+// Текстова відповідь (для помилок і підтверджень)
+function sendText(res, statusCode, message, extraHeaders = {}) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    ...extraHeaders,
+  });
+  res.end(message);
+}
+ 
+function getStatusCode(url) {
+  const { pathname } = new URL(url, 'http://localhost');
+  const match = /^\/(\d{3})$/.exec(pathname);
+  return match ? match[1] : null;
+}
+ 
+// Шлях до файлу картинки в кеші: <cache>/404.jpg
+function cachePath(code) {
+  return path.join(cacheDir, `${code}.jpg`);
+}
+ 
+// Читає все тіло запиту. req — це потік (Readable stream),
+// дані надходять частинами; for await збирає їх без колбеків.
+async function readBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+ 
+async function saveToCache(filePath, data) {
+  const tmpPath = `${filePath}.${process.pid}-${Date.now()}.tmp`;
+  try {
+    await writeFile(tmpPath, data);
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await rm(tmpPath, { force: true }); // прибираємо тимчасовий файл
+    throw err;
+  }
+}
+ 
+// Запит картинки до http.cat через superagent.
+// Проміс відхиляється, якщо http.cat повернув 4xx/5xx або сталася мережева помилка.
+async function fetchFromHttpCat(code) {
+  const response = await superagent
+    .get(`https://http.cat/${code}`)
+    .responseType('blob') // тіло відповіді — Buffer (двійкові дані без змін)
+    .timeout({ response: 5000, deadline: 15000 });
+  return response.body;
+}
