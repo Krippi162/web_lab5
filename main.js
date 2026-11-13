@@ -153,3 +153,52 @@ async function handleDelete(res, code) {
   }
   sendText(res, 200, `Картинку для коду ${code} видалено з кешу`);
 }
+
+// HTTP-сервер
+const server = http.createServer(async (req, res) => {
+  console.log(`${new Date().toISOString()}  ${req.method} ${req.url}`);
+  try {
+    if (!ALLOWED_METHODS.includes(req.method)) {
+      sendText(res, 405, `Метод ${req.method} не підтримується`, {
+        Allow: ALLOWED_METHODS.join(', '),
+      });
+      return;
+    }
+ 
+    const code = getStatusCode(req.url);
+    if (code === null) {
+      sendText(res, 400, 'Некоректний шлях: очікується /<тризначний код>, наприклад /404');
+      return;
+    }
+ 
+    switch (req.method) {
+      case 'GET':
+        await handleGet(res, code);
+        break;
+      case 'PUT':
+        await handlePut(req, res, code);
+        break;
+      case 'DELETE':
+        await handleDelete(res, code);
+        break;
+    }
+  } catch (err) {
+    // Будь-яка непередбачена помилка -> 500, сервер працює далі
+    console.error(err);
+    if (!res.headersSent) {
+      sendText(res, 500, 'Внутрішня помилка сервера');
+    } else {
+      res.end();
+    }
+  }
+});
+
+server.listen(port, host);
+try {
+  await once(server, 'listening');
+  console.log(`Сервер працює: http://${host}:${port}`);
+  console.log(`Тека кешу: ${cacheDir}`);
+} catch (err) {
+  console.error(`Не вдалося запустити сервер: ${err.message}`);
+  process.exit(1);
+}
