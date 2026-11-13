@@ -89,3 +89,67 @@ async function fetchFromHttpCat(code) {
     .timeout({ response: 5000, deadline: 15000 });
   return response.body;
 }
+
+// Обробники методів
+ 
+// GET: з кешу, а якщо там немає — з http.cat
+async function handleGet(res, code) {
+  const filePath = cachePath(code);
+ 
+  // Пробуємо віддати з кешу
+  try {
+    const image = await readFile(filePath);
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', [SOURCE_HEADER]: 'cache' });
+    res.end(image);
+    return;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err; // інші помилки диска -> 500
+  }
+ 
+  // У кеші немає — йдемо на http.cat
+  let image;
+  try {
+    image = await fetchFromHttpCat(code);
+  } catch (err) {
+    const reason = err.status
+      ? `http.cat відповів кодом ${err.status}`
+      : `помилка запиту до http.cat: ${err.message}`;
+    sendText(res, 404, `Картинку для коду ${code} не знайдено (${reason})`);
+    return; // у кеш нічого не зберігаємо
+  }
+ 
+  if (!Buffer.isBuffer(image) || image.length === 0) {
+    sendText(res, 404, `Картинку для коду ${code} не знайдено (порожня відповідь http.cat)`);
+    return;
+  }
+ 
+  // Спочатку зберігаємо в кеш, потім надсилаємо клієнтові
+  await saveToCache(filePath, image);
+  res.writeHead(200, { 'Content-Type': 'image/jpeg', [SOURCE_HEADER]: 'http.cat' });
+  res.end(image);
+}
+ 
+// PUT: записує картинку з тіла запиту в кеш (або замінює наявну)
+async function handlePut(req, res, code) {
+  const body = await readBody(req);
+  if (body.length === 0) {
+    sendText(res, 400, 'Тіло запиту порожнє: передайте картинку');
+    return;
+  }
+  await saveToCache(cachePath(code), body);
+  sendText(res, 201, `Картинку для коду ${code} збережено в кеш`);
+}
+ 
+// DELETE: видаляє картинку з кешу
+async function handleDelete(res, code) {
+  try {
+    await unlink(cachePath(code));
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      sendText(res, 404, `Картинки для коду ${code} немає в кеші`);
+      return;
+    }
+    throw err; // інші помилки -> 500
+  }
+  sendText(res, 200, `Картинку для коду ${code} видалено з кешу`);
+}
